@@ -265,8 +265,86 @@ async function run() {
 
 
 
+    //  stats or analysis
+
+    app.get('/admin-stats', async (req, res) => {
+      const users = await userCollection.estimatedDocumentCount()
+      const menuitems = await menuCollection.estimatedDocumentCount()
+      const orders = await paymentCollection.estimatedDocumentCount()
+
+      // this is not the best way
+      // const payments = await paymentCollection.find().toArray()
+      // const revenue = payments.reduce((total,payment)=> total + payment.price,0)
+
+      //  best way
+      const result = await paymentCollection.aggregate([
+        {
+          $group: {
+            _id: null,
+            totalRevenue :{
+              $sum: '$price'
+            }
+
+          }
+        }
+      ]).toArray()
+      const revenue = result.length > 0 ? result[0].totalRevenue: 0 ;
+
+      res.send({
+        users,
+        menuitems,
+        orders,
+        revenue
+      })
+    })
+
+// order status
+    /**
+     * ----------------------------
+     *    NON-Efficient Way
+     * ------------------------------
+     * 1. load all the payments
+     * 2. for every menuItemIds (which is an array), go find the item from menu collection
+     * 3. for every item in the menu collection that you found from a payment entry (document)
+    */
 
 
+    //  using aggregate pipeline
+    app.get('/order-stats',verifyToken,verifyAdmin, async(req,res)=>{
+      const result = await paymentCollection.aggregate([
+        {
+          $unwind: '$menuItemIds'
+        },
+        {
+          $lookup: {
+            from:'menu',
+            localField: 'menuItemIds',
+             foreignField: '_id',
+             as:'menuItems'
+          }
+        },
+        {
+          $unwind: '$menuItems'
+        },
+        {
+          $group:{
+             _id: '$menuItems.category',
+             quantity:{ $sum: 1 },
+             revenue:{ $sum: '$menuItems.price'}
+          }
+        },
+        {
+          $project: {
+            _id:0,
+            category: '$_id',
+            quantity: '$quantity',
+            revenue: '$revenue'
+          }
+        }
+
+      ]).toArray()
+      res.send(result)
+    })
 
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
